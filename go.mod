@@ -1,4 +1,4 @@
-module github.com/kgilich/aiprompt-syncer
+module github.com/kgilich/promptsync
 
 go 1.22
 

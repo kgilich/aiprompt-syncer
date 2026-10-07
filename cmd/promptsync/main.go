@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kgilich/aiprompt-syncer/internal/promptsync"
+	"github.com/kgilich/promptsync/internal/promptsync"
 )
 
 func main() {
