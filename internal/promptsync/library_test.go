@@ -55,7 +55,7 @@ func TestUpdateAndInstallUsePinnedCommits(t *testing.T) {
 	}
 	initialPath := librarySnapshotPath(cacheRoot, library, initial)
 	contents, err := os.ReadFile(filepath.Join(initialPath, "master.md"))
-	if err != nil || string(contents) != "initial prompt\n" {
+	if err != nil || normalizeLineEndings(contents) != "initial prompt\n" {
 		t.Fatalf("initial snapshot contents = %q, error = %v", contents, err)
 	}
 
@@ -77,7 +77,7 @@ func TestUpdateAndInstallUsePinnedCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read updated prompt: %v", err)
 	}
-	if string(contents) != "updated prompt\n" {
+	if normalizeLineEndings(contents) != "updated prompt\n" {
 		t.Fatalf("cached prompt = %q", contents)
 	}
 	lockBeforeInstall, err := os.ReadFile(lockPath)
@@ -99,7 +99,7 @@ func TestUpdateAndInstallUsePinnedCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read locked prompt: %v", err)
 	}
-	if string(contents) != "initial prompt\n" {
+	if normalizeLineEndings(contents) != "initial prompt\n" {
 		t.Fatalf("locked prompt = %q, want initial prompt", contents)
 	}
 
@@ -112,7 +112,7 @@ func TestUpdateAndInstallUsePinnedCommits(t *testing.T) {
 		t.Fatalf("resolve locked library after install: %v", err)
 	}
 	contents, err = os.ReadFile(filepath.Join(lockedRoot, "master.md"))
-	if err != nil || string(contents) != "initial prompt\n" {
+	if err != nil || normalizeLineEndings(contents) != "initial prompt\n" {
 		t.Fatalf("clean-cache locked contents = %q, error = %v", contents, err)
 	}
 }
@@ -173,4 +173,8 @@ func runGitTest(t *testing.T, gitPath string, args ...string) {
 	if _, err := runGit(gitPath, args...); err != nil {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}
+}
+
+func normalizeLineEndings(contents []byte) string {
+	return strings.ReplaceAll(string(contents), "\r\n", "\n")
 }
