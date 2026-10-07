@@ -66,6 +66,21 @@ func run(args []string) error {
 			fmt.Println("Wrote", path)
 		}
 		return nil
+	case "update":
+		flags := flag.NewFlagSet("update", flag.ContinueOnError)
+		config := flags.String("config", "promptsync.yaml", "path to configuration file")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return usageError()
+		}
+		revision, err := promptsync.Update(*config)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Updated library to %s\n", revision)
+		return nil
 	case "status":
 		flags := flag.NewFlagSet("status", flag.ContinueOnError)
 		config := flags.String("config", "promptsync.yaml", "path to configuration file")
@@ -82,7 +97,7 @@ func run(args []string) error {
 		printStatuses(statuses)
 		return nil
 	case "help", "-h", "--help":
-		fmt.Print("Usage: promptsync <init|status|sync> [options]\n\nCommands:\n  init               Create a starter library and configuration\n  status             Show whether configured targets are current\n  sync               Render the library into configured target files\n  sync --check       Check target freshness without writing files\n")
+		fmt.Print("Usage: promptsync <init|update|status|sync> [options]\n\nCommands:\n  init               Create a starter library and configuration\n  update             Fetch the configured remote prompt library\n  status             Show whether configured targets are current\n  sync               Render the library into configured target files\n  sync --check       Check target freshness without writing files\n")
 		return nil
 	default:
 		return usageError()
@@ -96,5 +111,5 @@ func printStatuses(statuses []promptsync.TargetStatus) {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: promptsync <init|sync> [options] (run 'promptsync help' for details)")
+	return fmt.Errorf("usage: promptsync <init|update|status|sync> [options] (run 'promptsync help' for details)")
 }

@@ -2,6 +2,7 @@ package promptsync
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,15 @@ import (
 
 type Config struct {
 	Version   int               `yaml:"version"`
+	Library   *Library          `yaml:"library,omitempty"`
 	Source    string            `yaml:"source"`
 	Variables map[string]string `yaml:"variables"`
 	Targets   []Target          `yaml:"targets"`
+}
+
+type Library struct {
+	Repository string `yaml:"repository"`
+	Ref        string `yaml:"ref"`
 }
 
 type Target struct {
@@ -48,6 +55,15 @@ func (config Config) validate() error {
 	}
 	if strings.TrimSpace(config.Source) == "" {
 		return fmt.Errorf("config source must not be empty")
+	}
+	if config.Library != nil {
+		repository, err := url.Parse(config.Library.Repository)
+		if err != nil || repository.Scheme != "https" || repository.Host == "" || repository.User != nil {
+			return fmt.Errorf("library repository must be a public HTTPS URL")
+		}
+		if strings.TrimSpace(config.Library.Ref) == "" || strings.HasPrefix(config.Library.Ref, "-") {
+			return fmt.Errorf("library ref must be a non-empty branch or tag name")
+		}
 	}
 	if len(config.Targets) == 0 {
 		return fmt.Errorf("config must define at least one target")

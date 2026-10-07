@@ -78,8 +78,12 @@ func generateTargets(configPath string) ([]generatedTarget, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	library, err := libraryRoot(config, root)
+	if err != nil {
+		return nil, "", err
+	}
 
-	sourcePath := resolve(root, config.Source)
+	sourcePath := resolve(library, config.Source)
 	source, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return nil, "", fmt.Errorf("read source %q: %w", sourcePath, err)
@@ -100,7 +104,7 @@ func generateTargets(configPath string) ([]generatedTarget, string, error) {
 			}
 			values["Content"] = content
 
-			templatePath := resolve(root, target.Template)
+			templatePath := resolve(library, target.Template)
 			templateSource, err := os.ReadFile(templatePath)
 			if err != nil {
 				return nil, "", fmt.Errorf("read template %q: %w", templatePath, err)
