@@ -11,11 +11,12 @@ import (
 )
 
 type Config struct {
-	Version   int               `yaml:"version"`
-	Library   *Library          `yaml:"library,omitempty"`
-	Source    string            `yaml:"source"`
-	Variables map[string]string `yaml:"variables"`
-	Targets   []Target          `yaml:"targets"`
+	Version              int               `yaml:"version"`
+	Library              *Library          `yaml:"library,omitempty"`
+	Source               string            `yaml:"source"`
+	Variables            map[string]string `yaml:"variables"`
+	Targets              []Target          `yaml:"targets"`
+	AllowExternalTargets bool              `yaml:"allow_external_targets,omitempty"`
 }
 
 type Library struct {
@@ -75,6 +76,12 @@ func (config Config) validate() error {
 			return fmt.Errorf("target %d path must not be empty", index+1)
 		}
 		key := filepath.Clean(target.Path)
+		if key == "." {
+			return fmt.Errorf("target %d path must name a file", index+1)
+		}
+		if !config.AllowExternalTargets && (filepath.IsAbs(target.Path) || key == ".." || strings.HasPrefix(key, ".."+string(filepath.Separator))) {
+			return fmt.Errorf("target %d path %q escapes the project; set allow_external_targets: true to permit it", index+1, target.Path)
+		}
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("duplicate target path %q", target.Path)
 		}
