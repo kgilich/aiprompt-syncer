@@ -14,7 +14,7 @@ Install the CLI from this checkout:
 go install ./cmd/promptsync
 ```
 
-Then, in the project where you want the generated instruction files, run `promptsync init` followed by `promptsync sync`. For local development, run `go run ./cmd/promptsync init` and `go run ./cmd/promptsync sync` from this repository.
+Then, in the project where you want the generated instruction files, run `promptsync init` followed by `promptsync sync`. For a shared remote library, configure its Git URL and ref, run `promptsync update`, then `promptsync sync`. For local development, run `go run ./cmd/promptsync init` and `go run ./cmd/promptsync sync` from this repository.
 
 `init` creates `promptsync.yaml`, `prompts/master.md`, and starter templates. It refuses to overwrite any existing scaffold file. Edit the Markdown source and YAML variables, then run `sync` to write all configured targets.
 
@@ -22,23 +22,27 @@ Then, in the project where you want the generated instruction files, run `prompt
 
 ```yaml
 version: 1
+library:
+  repository: https://github.com/your-org/prompt-library.git
+  ref: main
 source: prompts/master.md
 variables:
-	Project: Example App
+  Project: Example App
 targets:
-	- path: .github/copilot-instructions.md
-		template: templates/copilot.tmpl
-	- path: CLAUDE.md
-		template: templates/claude.tmpl
-	- path: .cursorrules
-		template: templates/cursor.tmpl
+  - path: .github/copilot-instructions.md
+    template: templates/copilot.tmpl
+  - path: CLAUDE.md
+    template: templates/claude.tmpl
+  - path: .cursorrules
+    template: templates/cursor.tmpl
 ```
 
-Paths are resolved relative to the configuration file. The source and target templates use Go's `text/template` syntax. Source templates can reference YAML values such as `{{ .Project }}`. Target templates receive the rendered source as `{{ .Content }}` and can also access configured variables.
+When `library` is set, `source` and target `template` paths are resolved inside the cloned library. Without it, paths are resolved relative to the configuration file. Remote libraries must use a public HTTPS Git URL and a branch or tag ref. The source and target templates use Go's `text/template` syntax. Source templates can reference YAML values such as `{{ .Project }}`. Target templates receive the rendered source as `{{ .Content }}` and can also access configured variables.
 
 Commands:
 
 - `promptsync init [-dir PATH]` creates a starter prompt library.
+- `promptsync update [-config PATH]` clones or fetches the configured remote library into the user cache.
 - `promptsync status [-config PATH]` inventories configured targets as `missing`, `current`, or `modified`.
 - `promptsync sync [-config PATH]` renders and writes configured targets.
 - `promptsync sync --check [-config PATH]` reports target status without writing files and exits with an error if any target is missing or modified.
@@ -46,11 +50,11 @@ Commands:
 
 `status` and `sync --check` are read-only. `sync` overwrites configured targets, including manually modified files; use `status` first if you need to inspect drift.
 
+The remote library is cached per repository URL and ref under the operating system's user cache directory. Run `update` explicitly when you want to fetch newer content; `sync` never performs an implicit network operation.
+
 ## Development
 
 ```powershell
 go test ./...
 go build ./cmd/promptsync
 ```
-
-API-based push/pull is TODO. For now, use `git push` to update the repository and `git pull` to get changes from others.
