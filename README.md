@@ -1,24 +1,39 @@
 # PromptSync
 
-PromptSync keeps project instructions in one Markdown source and renders them into the files expected by tools such as GitHub Copilot, Claude Code, and Cursor.
+**One source of truth for AI coding instructions.** Write your project guidance once in Markdown, then render it into the instruction files your tools already use.
 
-## Requirements
+[![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![CI](https://github.com/kgilich/aiprompt-syncer/actions/workflows/ci.yml/badge.svg)](https://github.com/kgilich/aiprompt-syncer/actions/workflows/ci.yml)
 
-- Go 1.22 or newer
+Generate files for GitHub Copilot, Claude Code, Cursor, and other tools from one prompt library. Keep it local, or share it across projects through Git. A committed lockfile makes every project use the same library revision.
 
-## Quick start
+## Get started
 
-Install the CLI from this checkout:
+### Local prompt library
 
-```powershell
+Install PromptSync from this checkout:
+
+```sh
 go install ./cmd/promptsync
 ```
 
-Then, in the project where you want the generated instruction files, run `promptsync init` followed by `promptsync sync`. For a shared remote library, configure its Git URL and ref, run `promptsync update`, then `promptsync sync`. For local development, run `go run ./cmd/promptsync init` and `go run ./cmd/promptsync sync` from this repository.
+In the project where you want the generated instructions:
 
-`init` creates `promptsync.yaml`, `prompts/master.md`, and starter templates. It refuses to overwrite any existing scaffold file. Edit the Markdown source and YAML variables, then run `sync` to write all configured targets.
+```sh
+promptsync init
+```
 
-## Configuration
+Edit `prompts/master.md`, then generate the configured instruction files:
+
+```sh
+promptsync sync
+```
+
+`init` creates a starter `promptsync.yaml`, Markdown source, and target templates. It will not overwrite existing scaffold files.
+
+### Shared Git library
+
+Add a remote library to `promptsync.yaml`:
 
 ```yaml
 version: 1
@@ -37,24 +52,41 @@ targets:
     template: templates/cursor.tmpl
 ```
 
-When `library` is set, `source` and target `template` paths are resolved inside the cloned library. Without it, paths are resolved relative to the configuration file. Remote libraries must use a public HTTPS Git URL and a branch or tag ref. The source and target templates use Go's `text/template` syntax. Source templates can reference YAML values such as `{{ .Project }}`. Target templates receive the rendered source as `{{ .Content }}` and can also access configured variables.
+Fetch the library and render it:
 
-Commands:
+```sh
+promptsync update
+promptsync sync
+```
 
-- `promptsync init [-dir PATH]` creates a starter prompt library.
-- `promptsync update [-config PATH]` clones or fetches the configured remote library into the user cache.
-- `promptsync status [-config PATH]` inventories configured targets as `missing`, `current`, or `modified`.
-- `promptsync sync [-config PATH]` renders and writes configured targets.
-- `promptsync sync --check [-config PATH]` reports target status without writing files and exits with an error if any target is missing or modified.
-- `promptsync help` prints command usage.
+Commit `promptsync.lock` with your project. It records the exact library commit, so teammates and CI can reproduce the same generated instructions. Run `promptsync update` when you intentionally want to move to a newer revision.
 
-`status` and `sync --check` are read-only. `sync` overwrites configured targets, including manually modified files; use `status` first if you need to inspect drift.
+## Commands
 
-The remote library is cached per repository URL and ref under the operating system's user cache directory. Run `update` explicitly when you want to fetch newer content; `sync` never performs an implicit network operation.
+| Command | What it does |
+| --- | --- |
+| `promptsync init [-dir PATH]` | Create a starter prompt library. |
+| `promptsync update [-config PATH]` | Fetch the configured Git library and update `promptsync.lock`. |
+| `promptsync status [-config PATH]` | Report each target as `missing`, `current`, or `modified`. |
+| `promptsync sync [-config PATH]` | Render and write all configured targets. |
+| `promptsync sync --check [-config PATH]` | Check target freshness without writing; fail if any target is missing or modified. |
+| `promptsync help` | Show command usage. |
 
-## Development
+## How it works
 
-```powershell
+- **One source:** Markdown is the canonical prompt; Go templates adapt it for each target.
+- **Explicit updates:** `sync` never makes a network request. Fetch new library content with `update`.
+- **Reproducible projects:** `sync` and `status` use the commit in `promptsync.lock`.
+- **Local or shared:** Without `library`, paths are relative to the config file. With `library`, source and template paths are relative to the cloned library.
+- **Git required for remote libraries:** Remote URLs must use HTTPS and identify a branch or tag. The repository is cached in the operating system's user cache directory.
+
+`status` and `sync --check` are read-only. `sync` overwrites configured targets, including manual edits; inspect changes with `status` first.
+
+## Develop
+
+Requires Go 1.22 or newer. Git is needed only when using a remote library.
+
+```sh
 go test ./...
 go build ./cmd/promptsync
 ```
