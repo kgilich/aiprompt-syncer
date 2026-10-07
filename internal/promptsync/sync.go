@@ -5,27 +5,92 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"text/template"
 )
 
+type TargetState string
+
+const (
+	TargetMissing  TargetState = "missing"
+	TargetCurrent  TargetState = "current"
+	TargetModified TargetState = "modified"
+)
+
+type TargetStatus struct {
+	Path  string
+	State TargetState
+}
+
+type generatedTarget struct {
+	path    string
+	content []byte
+}
+
 func Sync(configPath string) ([]string, error) {
-	config, root, err := loadConfig(configPath)
+	targets, root, err := generateTargets(configPath)
 	if err != nil {
 		return nil, err
+	}
+
+	written := make([]string, 0, len(targets))
+	for _, target := range targets {
+		outputPath := resolve(root, target.path)
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+			return nil, fmt.Errorf("create directory for %q: %w", outputPath, err)
+		}
+		if err := os.WriteFile(outputPath, target.content, 0o644); err != nil {
+			return nil, fmt.Errorf("write target %q: %w", outputPath, err)
+		}
+		written = append(written, target.path)
+	}
+	return written, nil
+}
+
+func Inspect(configPath string) ([]TargetStatus, error) {
+	targets, root, err := generateTargets(configPath)
+	if err != nil {
+		return nil, err
+	}
+
+	statuses := make([]TargetStatus, 0, len(targets))
+	for _, target := range targets {
+		path := resolve(root, target.path)
+		current, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			statuses = append(statuses, TargetStatus{Path: target.path, State: TargetMissing})
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read target %q: %w", path, err)
+		}
+		state := TargetModified
+		if slices.Equal(current, target.content) {
+			state = TargetCurrent
+		}
+		statuses = append(statuses, TargetStatus{Path: target.path, State: state})
+	}
+	return statuses, nil
+}
+
+func generateTargets(configPath string) ([]generatedTarget, string, error) {
+	config, root, err := loadConfig(configPath)
+	if err != nil {
+		return nil, "", err
 	}
 
 	sourcePath := resolve(root, config.Source)
 	source, err := os.ReadFile(sourcePath)
 	if err != nil {
-		return nil, fmt.Errorf("read source %q: %w", sourcePath, err)
+		return nil, "", fmt.Errorf("read source %q: %w", sourcePath, err)
 	}
 
 	content, err := render("source", string(source), config.Variables)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	written := make([]string, 0, len(config.Targets))
+	generated := make([]generatedTarget, 0, len(config.Targets))
 	for _, target := range config.Targets {
 		output := content
 		if target.Template != "" {
@@ -38,24 +103,16 @@ func Sync(configPath string) ([]string, error) {
 			templatePath := resolve(root, target.Template)
 			templateSource, err := os.ReadFile(templatePath)
 			if err != nil {
-				return nil, fmt.Errorf("read template %q: %w", templatePath, err)
+				return nil, "", fmt.Errorf("read template %q: %w", templatePath, err)
 			}
 			output, err = render(target.Template, string(templateSource), values)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 		}
-
-		outputPath := resolve(root, target.Path)
-		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-			return nil, fmt.Errorf("create directory for %q: %w", outputPath, err)
-		}
-		if err := os.WriteFile(outputPath, []byte(output), 0o644); err != nil {
-			return nil, fmt.Errorf("write target %q: %w", outputPath, err)
-		}
-		written = append(written, target.Path)
+		generated = append(generated, generatedTarget{path: target.Path, content: []byte(output)})
 	}
-	return written, nil
+	return generated, root, nil
 }
 
 func render(name, source string, values any) (string, error) {
