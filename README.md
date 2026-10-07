@@ -39,10 +39,12 @@ Paths are resolved relative to the configuration file. The source and target tem
 Commands:
 
 - `promptsync init [-dir PATH]` creates a starter prompt library.
-- `promptsync sync [-config PATH]` renders configured targets.
+- `promptsync status [-config PATH]` inventories configured targets as `missing`, `current`, or `modified`.
+- `promptsync sync [-config PATH]` renders and writes configured targets.
+- `promptsync sync --check [-config PATH]` reports target status without writing files and exits with an error if any target is missing or modified.
 - `promptsync help` prints command usage.
 
-Generated targets are overwritten by `sync`; keep edits in the source or templates.
+`status` and `sync --check` are read-only. `sync` overwrites configured targets, including manually modified files; use `status` first if you need to inspect drift.
 
 ## Development
 

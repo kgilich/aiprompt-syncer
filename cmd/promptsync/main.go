@@ -38,11 +38,25 @@ func run(args []string) error {
 	case "sync":
 		flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 		config := flags.String("config", "promptsync.yaml", "path to configuration file")
+		check := flags.Bool("check", false, "check generated targets without writing files")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
 		if flags.NArg() != 0 {
 			return usageError()
+		}
+		if *check {
+			statuses, err := promptsync.Inspect(*config)
+			if err != nil {
+				return err
+			}
+			printStatuses(statuses)
+			for _, status := range statuses {
+				if status.State != promptsync.TargetCurrent {
+					return fmt.Errorf("generated targets are out of date; run 'promptsync sync'")
+				}
+			}
+			return nil
 		}
 		written, err := promptsync.Sync(*config)
 		if err != nil {
@@ -52,11 +66,32 @@ func run(args []string) error {
 			fmt.Println("Wrote", path)
 		}
 		return nil
+	case "status":
+		flags := flag.NewFlagSet("status", flag.ContinueOnError)
+		config := flags.String("config", "promptsync.yaml", "path to configuration file")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return usageError()
+		}
+		statuses, err := promptsync.Inspect(*config)
+		if err != nil {
+			return err
+		}
+		printStatuses(statuses)
+		return nil
 	case "help", "-h", "--help":
-		fmt.Print("Usage: promptsync <init|sync> [options]\n\nCommands:\n  init   Create a starter library and configuration\n  sync   Render the library into configured target files\n")
+		fmt.Print("Usage: promptsync <init|status|sync> [options]\n\nCommands:\n  init               Create a starter library and configuration\n  status             Show whether configured targets are current\n  sync               Render the library into configured target files\n  sync --check       Check target freshness without writing files\n")
 		return nil
 	default:
 		return usageError()
+	}
+}
+
+func printStatuses(statuses []promptsync.TargetStatus) {
+	for _, status := range statuses {
+		fmt.Printf("%-8s %s\n", status.State, status.Path)
 	}
 }
 
