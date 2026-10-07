@@ -102,7 +102,7 @@ promptsync sync --check
 
 ## Develop
 
-Requires Go 1.22 or newer. Git is needed only when using a remote library.
+Supports Linux, macOS, and Windows. Requires Go 1.22 or newer; Git is needed only when using a remote library.
 
 ```sh
 go test ./...

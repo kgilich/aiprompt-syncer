@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -166,7 +167,7 @@ func cachedSnapshot(cacheRoot string, library Library, commit string) (string, e
 	return "", fmt.Errorf("locked library revision is not installed; run 'promptsync install'")
 }
 
-func updateLibrary(gitPath string, library Library, lockPath, cacheRoot string) (string, error) {
+func updateLibrary(gitPath string, library Library, lockPath, cacheRoot string) (commitResult string, returnErr error) {
 	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
 		return "", fmt.Errorf("create library cache directory: %w", err)
 	}
@@ -174,7 +175,11 @@ func updateLibrary(gitPath string, library Library, lockPath, cacheRoot string) 
 	if err != nil {
 		return "", fmt.Errorf("create temporary library checkout: %w", err)
 	}
-	defer os.RemoveAll(temporary)
+	defer func() {
+		if cleanupErr := os.RemoveAll(temporary); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("clean temporary library checkout: %w", cleanupErr))
+		}
+	}()
 
 	if _, err := runGit(gitPath, "clone", "--depth=1", "--single-branch", "--branch", library.Ref, "--", library.Repository, temporary); err != nil {
 		return "", err
@@ -197,7 +202,7 @@ func updateLibrary(gitPath string, library Library, lockPath, cacheRoot string) 
 	return commit, nil
 }
 
-func installLibrary(gitPath string, library Library, commit, cacheRoot string) error {
+func installLibrary(gitPath string, library Library, commit, cacheRoot string) (returnErr error) {
 	if !validCommit(commit) {
 		return fmt.Errorf("promptsync.lock contains an invalid commit SHA")
 	}
@@ -211,7 +216,11 @@ func installLibrary(gitPath string, library Library, commit, cacheRoot string) e
 	if err != nil {
 		return fmt.Errorf("create temporary library checkout: %w", err)
 	}
-	defer os.RemoveAll(temporary)
+	defer func() {
+		if cleanupErr := os.RemoveAll(temporary); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("clean temporary library checkout: %w", cleanupErr))
+		}
+	}()
 
 	if _, err := runGit(gitPath, "init", temporary); err != nil {
 		return err
