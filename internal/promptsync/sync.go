@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"text/template"
 )
 
@@ -27,15 +28,50 @@ type generatedTarget struct {
 	content []byte
 }
 
+type SyncOptions struct {
+	Force bool
+}
+
 func Sync(configPath string) ([]string, error) {
-	targets, root, err := generateTargets(configPath)
+	return SyncWithOptions(configPath, SyncOptions{})
+}
+
+func SyncWithOptions(configPath string, options SyncOptions) ([]string, error) {
+	targets, root, allowExternal, err := generateTargets(configPath)
 	if err != nil {
 		return nil, err
+	}
+	modified := make([]string, 0)
+	for _, target := range targets {
+		if err := validatePathWithin(root, target.path, allowExternal, "target"); err != nil {
+			return nil, err
+		}
+		outputPath := resolve(root, target.path)
+		current, err := os.ReadFile(outputPath)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect target %q: %w", outputPath, err)
+		}
+		if !slices.Equal(current, target.content) {
+			modified = append(modified, target.path)
+		}
+	}
+	if len(modified) > 0 && !options.Force {
+		return nil, fmt.Errorf("refusing to overwrite modified targets: %s; inspect with 'promptsync status' or rerun with --force", strings.Join(modified, ", "))
 	}
 
 	written := make([]string, 0, len(targets))
 	for _, target := range targets {
 		outputPath := resolve(root, target.path)
+		current, err := os.ReadFile(outputPath)
+		if err == nil && slices.Equal(current, target.content) {
+			continue
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("inspect target %q: %w", outputPath, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 			return nil, fmt.Errorf("create directory for %q: %w", outputPath, err)
 		}
@@ -48,13 +84,16 @@ func Sync(configPath string) ([]string, error) {
 }
 
 func Inspect(configPath string) ([]TargetStatus, error) {
-	targets, root, err := generateTargets(configPath)
+	targets, root, allowExternal, err := generateTargets(configPath)
 	if err != nil {
 		return nil, err
 	}
 
 	statuses := make([]TargetStatus, 0, len(targets))
 	for _, target := range targets {
+		if err := validatePathWithin(root, target.path, allowExternal, "target"); err != nil {
+			return nil, err
+		}
 		path := resolve(root, target.path)
 		current, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
@@ -73,25 +112,28 @@ func Inspect(configPath string) ([]TargetStatus, error) {
 	return statuses, nil
 }
 
-func generateTargets(configPath string) ([]generatedTarget, string, error) {
+func generateTargets(configPath string) ([]generatedTarget, string, bool, error) {
 	config, root, err := loadConfig(configPath)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 	library, err := libraryRoot(config, root)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
+	}
+	if err := validatePathWithin(library, config.Source, false, "source"); err != nil {
+		return nil, "", false, err
 	}
 
 	sourcePath := resolve(library, config.Source)
 	source, err := os.ReadFile(sourcePath)
 	if err != nil {
-		return nil, "", fmt.Errorf("read source %q: %w", sourcePath, err)
+		return nil, "", false, fmt.Errorf("read source %q: %w", sourcePath, err)
 	}
 
 	content, err := render("source", string(source), config.Variables)
 	if err != nil {
-		return nil, "", err
+		return nil, "", false, err
 	}
 
 	generated := make([]generatedTarget, 0, len(config.Targets))
@@ -104,19 +146,22 @@ func generateTargets(configPath string) ([]generatedTarget, string, error) {
 			}
 			values["Content"] = content
 
+			if err := validatePathWithin(library, target.Template, false, "template"); err != nil {
+				return nil, "", false, err
+			}
 			templatePath := resolve(library, target.Template)
 			templateSource, err := os.ReadFile(templatePath)
 			if err != nil {
-				return nil, "", fmt.Errorf("read template %q: %w", templatePath, err)
+				return nil, "", false, fmt.Errorf("read template %q: %w", templatePath, err)
 			}
 			output, err = render(target.Template, string(templateSource), values)
 			if err != nil {
-				return nil, "", err
+				return nil, "", false, err
 			}
 		}
 		generated = append(generated, generatedTarget{path: target.Path, content: []byte(output)})
 	}
-	return generated, root, nil
+	return generated, root, config.AllowExternalTargets, nil
 }
 
 func render(name, source string, values any) (string, error) {
@@ -137,4 +182,49 @@ func resolve(root, path string) string {
 		return path
 	}
 	return filepath.Join(root, path)
+}
+
+func validatePathWithin(root, path string, allowExternal bool, kind string) error {
+	if allowExternal {
+		return nil
+	}
+	projectRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve root directory %q: %w", root, err)
+	}
+	projectRoot, err = filepath.Abs(projectRoot)
+	if err != nil {
+		return fmt.Errorf("resolve project directory: %w", err)
+	}
+	candidate, err := filepath.Abs(resolve(root, path))
+	if err != nil {
+		return fmt.Errorf("resolve %s path %q: %w", kind, path, err)
+	}
+	for {
+		if _, err := os.Lstat(candidate); err == nil {
+			resolved, err := filepath.EvalSymlinks(candidate)
+			if err != nil {
+				return fmt.Errorf("resolve %s path %q: %w", kind, path, err)
+			}
+			resolved, err = filepath.Abs(resolved)
+			if err != nil {
+				return fmt.Errorf("resolve %s path %q: %w", kind, path, err)
+			}
+			relative, err := filepath.Rel(projectRoot, resolved)
+			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				if kind == "target" {
+					return fmt.Errorf("target path %q resolves outside the project; set allow_external_targets: true to permit it", path)
+				}
+				return fmt.Errorf("%s path %q resolves outside its root", kind, path)
+			}
+			return nil
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect %s path %q: %w", kind, path, err)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return fmt.Errorf("%s path %q is outside its root", kind, path)
+		}
+		candidate = parent
+	}
 }

@@ -90,6 +90,75 @@ func TestConfigRejectsDuplicateTargets(t *testing.T) {
 	}
 }
 
+func TestSyncProtectsModifiedTargetsUnlessForced(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "promptsync.yaml")
+	writeTestFile(t, root, "promptsync.yaml", `version: 1
+source: prompts/master.md
+targets:
+  - path: CLAUDE.md
+`)
+	writeTestFile(t, root, "prompts/master.md", "generated rules\n")
+	writeTestFile(t, root, "CLAUDE.md", "manual changes\n")
+
+	if _, err := Sync(configPath); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("Sync() error = %v, want overwrite guard", err)
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read protected target: %v", err)
+	}
+	if string(contents) != "manual changes\n" {
+		t.Fatalf("protected target contents = %q", contents)
+	}
+
+	if _, err := SyncWithOptions(configPath, SyncOptions{Force: true}); err != nil {
+		t.Fatalf("SyncWithOptions(force) error = %v", err)
+	}
+	contents, err = os.ReadFile(filepath.Join(root, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read forced target: %v", err)
+	}
+	if string(contents) != "generated rules\n" {
+		t.Fatalf("forced target contents = %q", contents)
+	}
+}
+
+func TestSyncDoesNotPartiallyWriteWhenAnyTargetIsModified(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "promptsync.yaml")
+	writeTestFile(t, root, "promptsync.yaml", `version: 1
+source: prompts/master.md
+targets:
+  - path: generated/CLAUDE.md
+  - path: COPILOT.md
+`)
+	writeTestFile(t, root, "prompts/master.md", "generated rules\n")
+	writeTestFile(t, root, "COPILOT.md", "manual changes\n")
+
+	if _, err := Sync(configPath); err == nil {
+		t.Fatal("Sync() succeeded despite a modified target")
+	}
+	if _, err := os.Stat(filepath.Join(root, "generated", "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("sync partially wrote first target, stat error = %v", err)
+	}
+}
+
+func TestConfigRejectsTargetOutsideProjectByDefault(t *testing.T) {
+	config := Config{
+		Version: 1,
+		Source:  "prompts/master.md",
+		Targets: []Target{{Path: "../outside.md"}},
+	}
+	if err := config.validate(); err == nil {
+		t.Fatal("validate() accepted a target outside the project")
+	}
+	config.AllowExternalTargets = true
+	if err := config.validate(); err != nil {
+		t.Fatalf("validate() rejected explicitly allowed external target: %v", err)
+	}
+}
+
 func TestInitDoesNotOverwriteExistingFiles(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "promptsync.yaml", "user config")

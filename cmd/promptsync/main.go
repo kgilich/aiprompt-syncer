@@ -39,11 +39,15 @@ func run(args []string) error {
 		flags := flag.NewFlagSet("sync", flag.ContinueOnError)
 		config := flags.String("config", "promptsync.yaml", "path to configuration file")
 		check := flags.Bool("check", false, "check generated targets without writing files")
+		force := flags.Bool("force", false, "overwrite modified targets")
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
 		if flags.NArg() != 0 {
 			return usageError()
+		}
+		if *check && *force {
+			return fmt.Errorf("--check and --force cannot be used together")
 		}
 		if *check {
 			statuses, err := promptsync.Inspect(*config)
@@ -58,7 +62,7 @@ func run(args []string) error {
 			}
 			return nil
 		}
-		written, err := promptsync.Sync(*config)
+		written, err := promptsync.SyncWithOptions(*config, promptsync.SyncOptions{Force: *force})
 		if err != nil {
 			return err
 		}
@@ -81,6 +85,21 @@ func run(args []string) error {
 		}
 		fmt.Printf("Updated library to %s\n", revision)
 		return nil
+	case "install":
+		flags := flag.NewFlagSet("install", flag.ContinueOnError)
+		config := flags.String("config", "promptsync.yaml", "path to configuration file")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return usageError()
+		}
+		revision, err := promptsync.Install(*config)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Installed library at %s\n", revision)
+		return nil
 	case "status":
 		flags := flag.NewFlagSet("status", flag.ContinueOnError)
 		config := flags.String("config", "promptsync.yaml", "path to configuration file")
@@ -97,7 +116,7 @@ func run(args []string) error {
 		printStatuses(statuses)
 		return nil
 	case "help", "-h", "--help":
-		fmt.Print("Usage: promptsync <init|update|status|sync> [options]\n\nCommands:\n  init               Create a starter library and configuration\n  update             Fetch the configured remote prompt library\n  status             Show whether configured targets are current\n  sync               Render the library into configured target files\n  sync --check       Check target freshness without writing files\n")
+		fmt.Print("Usage: promptsync <init|update|install|status|sync> [options]\n\nCommands:\n  init               Create a starter library and configuration\n  update             Fetch the configured remote prompt library and advance the lock\n  install            Fetch the exact library revision from the lockfile\n  status             Show whether configured targets are current\n  sync               Render the library into configured target files\n  sync --check       Check target freshness without writing files\n  sync --force       Overwrite modified targets\n")
 		return nil
 	default:
 		return usageError()
@@ -111,5 +130,5 @@ func printStatuses(statuses []promptsync.TargetStatus) {
 }
 
 func usageError() error {
-	return fmt.Errorf("usage: promptsync <init|update|status|sync> [options] (run 'promptsync help' for details)")
+	return fmt.Errorf("usage: promptsync <init|update|install|status|sync> [options] (run 'promptsync help' for details)")
 }

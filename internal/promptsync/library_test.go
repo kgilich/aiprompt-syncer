@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestUpdateGitRepositoryClonesAndFetchesRef(t *testing.T) {
+func TestUpdateAndInstallUsePinnedCommits(t *testing.T) {
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git is not available")
@@ -17,7 +17,9 @@ func TestUpdateGitRepositoryClonesAndFetchesRef(t *testing.T) {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")
 	working := filepath.Join(root, "working")
-	cache := filepath.Join(root, "cache", "library")
+	cacheRoot := filepath.Join(root, "cache")
+	lockPath := filepath.Join(root, "promptsync.lock")
+	library := Library{Repository: remote, Ref: "main"}
 	runGitTest(t, gitPath, "init", "--bare", remote)
 	runGitTest(t, gitPath, "init", working)
 	if err := os.WriteFile(filepath.Join(working, "master.md"), []byte("initial prompt\n"), 0o644); err != nil {
@@ -29,24 +31,32 @@ func TestUpdateGitRepositoryClonesAndFetchesRef(t *testing.T) {
 	runGitTest(t, gitPath, "-C", working, "remote", "add", "origin", remote)
 	runGitTest(t, gitPath, "-C", working, "push", "-u", "origin", "main")
 
-	if err := updateGitRepository(gitPath, remote, "main", cache); err != nil {
-		t.Fatalf("initial clone: %v", err)
-	}
-	initial, err := runGit(gitPath, "-C", cache, "rev-parse", "HEAD")
+	initial, err := updateLibrary(gitPath, library, lockPath, cacheRoot)
 	if err != nil {
-		t.Fatalf("read initial revision: %v", err)
-	}
-	initial = strings.TrimSpace(initial)
-	lockPath := filepath.Join(root, "promptsync.lock")
-	if err := writeLibraryLock(lockPath, LibraryLock{Version: 1, Repository: "https://example.invalid/prompts.git", Ref: "main", Commit: initial}); err != nil {
-		t.Fatalf("write lockfile: %v", err)
+		t.Fatalf("initial update: %v", err)
 	}
 	lock, err := readLibraryLock(lockPath)
 	if err != nil {
 		t.Fatalf("read lockfile: %v", err)
 	}
-	if lock.Commit != initial {
-		t.Fatalf("locked commit = %q, want %q", lock.Commit, initial)
+	if lock.Commit != initial || lock.Repository != library.Repository {
+		t.Fatalf("lock = %+v, want initial commit %q", lock, initial)
+	}
+	cleanProject := filepath.Join(root, "clean-project")
+	if err := os.MkdirAll(cleanProject, 0o755); err != nil {
+		t.Fatalf("create clean project: %v", err)
+	}
+	if err := writeLibraryLock(filepath.Join(cleanProject, "promptsync.lock"), lock); err != nil {
+		t.Fatalf("write clean project lock: %v", err)
+	}
+	config := Config{Library: &library}
+	if _, err := libraryRootInCache(config, cleanProject, filepath.Join(root, "empty-cache")); err == nil || !strings.Contains(err.Error(), "promptsync install") {
+		t.Fatalf("libraryRootInCache() error = %v, want offline install instruction", err)
+	}
+	initialPath := librarySnapshotPath(cacheRoot, library, initial)
+	contents, err := os.ReadFile(filepath.Join(initialPath, "master.md"))
+	if err != nil || string(contents) != "initial prompt\n" {
+		t.Fatalf("initial snapshot contents = %q, error = %v", contents, err)
 	}
 
 	if err := os.WriteFile(filepath.Join(working, "master.md"), []byte("updated prompt\n"), 0o644); err != nil {
@@ -56,47 +66,61 @@ func TestUpdateGitRepositoryClonesAndFetchesRef(t *testing.T) {
 	runGitTest(t, gitPath, "-C", working, "-c", "user.name=PromptSync Test", "-c", "user.email=promptsync@example.invalid", "commit", "-m", "update prompt")
 	runGitTest(t, gitPath, "-C", working, "push", "origin", "main")
 
-	if err := updateGitRepository(gitPath, remote, "main", cache); err != nil {
-		t.Fatalf("fetch update: %v", err)
-	}
-	updated, err := runGit(gitPath, "-C", cache, "rev-parse", "HEAD")
+	updated, err := updateLibrary(gitPath, library, lockPath, cacheRoot)
 	if err != nil {
-		t.Fatalf("read updated revision: %v", err)
+		t.Fatalf("update: %v", err)
 	}
-	if strings.TrimSpace(initial) == strings.TrimSpace(updated) {
+	if initial == updated {
 		t.Fatal("update did not advance cached revision")
 	}
-	contents, err := os.ReadFile(filepath.Join(cache, "master.md"))
+	contents, err = os.ReadFile(filepath.Join(librarySnapshotPath(cacheRoot, library, updated), "master.md"))
 	if err != nil {
 		t.Fatalf("read updated prompt: %v", err)
 	}
 	if string(contents) != "updated prompt\n" {
 		t.Fatalf("cached prompt = %q", contents)
 	}
-
-	if err := checkoutLibraryCommit(gitPath, cache, lock.Commit); err != nil {
-		t.Fatalf("checkout locked revision: %v", err)
-	}
-	lockedRevision, err := runGit(gitPath, "-C", cache, "rev-parse", "HEAD")
+	lockBeforeInstall, err := os.ReadFile(lockPath)
 	if err != nil {
-		t.Fatalf("read locked revision: %v", err)
+		t.Fatalf("read updated lockfile: %v", err)
 	}
-	if strings.TrimSpace(lockedRevision) != lock.Commit {
-		t.Fatalf("checked out revision = %q, want locked %q", strings.TrimSpace(lockedRevision), lock.Commit)
+
+	if err := installLibrary(gitPath, library, initial, filepath.Join(root, "restore-cache")); err != nil {
+		t.Fatalf("install locked revision: %v", err)
 	}
-	contents, err = os.ReadFile(filepath.Join(cache, "master.md"))
+	lockAfterInstall, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatalf("read lockfile after install: %v", err)
+	}
+	if string(lockAfterInstall) != string(lockBeforeInstall) {
+		t.Fatal("install changed the lockfile")
+	}
+	contents, err = os.ReadFile(filepath.Join(librarySnapshotPath(filepath.Join(root, "restore-cache"), library, initial), "master.md"))
 	if err != nil {
 		t.Fatalf("read locked prompt: %v", err)
 	}
 	if string(contents) != "initial prompt\n" {
 		t.Fatalf("locked prompt = %q, want initial prompt", contents)
 	}
+
+	cleanCache := filepath.Join(root, "clean-cache")
+	if err := installLibrary(gitPath, library, initial, cleanCache); err != nil {
+		t.Fatalf("install from lock into clean cache: %v", err)
+	}
+	lockedRoot, err := libraryRootInCache(config, cleanProject, cleanCache)
+	if err != nil {
+		t.Fatalf("resolve locked library after install: %v", err)
+	}
+	contents, err = os.ReadFile(filepath.Join(lockedRoot, "master.md"))
+	if err != nil || string(contents) != "initial prompt\n" {
+		t.Fatalf("clean-cache locked contents = %q, error = %v", contents, err)
+	}
 }
 
-func TestLibraryRootRequiresLockfile(t *testing.T) {
-	config := Config{Library: &Library{Repository: "https://example.com/prompts.git", Ref: "main"}}
-	if _, err := libraryRoot(config, t.TempDir()); err == nil || !strings.Contains(err.Error(), "promptsync update") {
-		t.Fatalf("libraryRoot() error = %v, want update instruction", err)
+func TestCachedSnapshotRequiresInstall(t *testing.T) {
+	library := Library{Repository: "https://example.com/prompts.git", Ref: "main"}
+	if _, err := cachedSnapshot(t.TempDir(), library, strings.Repeat("a", 40)); err == nil || !strings.Contains(err.Error(), "promptsync install") {
+		t.Fatalf("cachedSnapshot() error = %v, want install instruction", err)
 	}
 }
 
@@ -109,6 +133,38 @@ func TestConfigRejectsNonHTTPSLibraryRepository(t *testing.T) {
 	}
 	if err := config.validate(); err == nil {
 		t.Fatal("validate() accepted a non-HTTPS repository")
+	}
+}
+
+func TestInspectRejectsSymlinkTargetOutsideProject(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeTestFile(t, root, "promptsync.yaml", `version: 1
+source: prompts/master.md
+targets:
+  - path: linked/CLAUDE.md
+`)
+	writeTestFile(t, root, "prompts/master.md", "rules\n")
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("directory symlinks are unavailable: %v", err)
+	}
+	if _, err := Inspect(filepath.Join(root, "promptsync.yaml")); err == nil || !strings.Contains(err.Error(), "outside the project") {
+		t.Fatalf("Inspect() error = %v, want symlink escape rejection", err)
+	}
+}
+
+func TestInspectRejectsSourceOutsideProject(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "secret.md"), []byte("not a prompt"), 0o644); err != nil {
+		t.Fatalf("write outside source: %v", err)
+	}
+	writeTestFile(t, root, "project/promptsync.yaml", `version: 1
+source: ../secret.md
+targets:
+  - path: CLAUDE.md
+`)
+	if _, err := Inspect(filepath.Join(root, "project", "promptsync.yaml")); err == nil || !strings.Contains(err.Error(), "outside its root") {
+		t.Fatalf("Inspect() error = %v, want source escape rejection", err)
 	}
 }
 
