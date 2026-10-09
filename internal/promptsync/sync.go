@@ -165,6 +165,7 @@ func generateTargets(configPath string) ([]generatedTarget, string, bool, error)
 }
 
 func render(name, source string, values any) (string, error) {
+	source = canonicalizeLineEndings(source)
 	tmpl, err := template.New(name).Option("missingkey=error").Parse(source)
 	if err != nil {
 		return "", fmt.Errorf("parse template %q: %w", name, err)
@@ -174,7 +175,12 @@ func render(name, source string, values any) (string, error) {
 	if err := tmpl.Execute(&output, values); err != nil {
 		return "", fmt.Errorf("render template %q: %w", name, err)
 	}
-	return output.String(), nil
+	return canonicalizeLineEndings(output.String()), nil
+}
+
+func canonicalizeLineEndings(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	return strings.ReplaceAll(value, "\r", "\n")
 }
 
 func resolve(root, path string) string {

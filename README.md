@@ -84,6 +84,7 @@ Run `promptsync update` only when you intentionally want to move to a newer revi
 ## How it works
 
 - **One source:** Markdown is the canonical prompt; Go templates adapt it for each target.
+- **Consistent output:** Generated text always uses LF line endings, regardless of the source checkout's CRLF/LF settings.
 - **Explicit network steps:** `update` advances the lock; `install` materializes the locked commit. `sync`, `status`, and `sync --check` do not access the network.
 - **Reproducible projects:** `sync` and `status` use the commit in `promptsync.lock`.
 - **Local or shared:** Without `library`, paths are relative to the config file. With `library`, source and template paths are relative to the cloned library.
