@@ -37,6 +37,38 @@ targets:
 	}
 }
 
+func TestSyncProducesSameOutputForLFAndCRLFInputs(t *testing.T) {
+	lfRoot := t.TempDir()
+	crlfRoot := t.TempDir()
+	configs := []string{filepath.Join(lfRoot, "promptsync.yaml"), filepath.Join(crlfRoot, "promptsync.yaml")}
+	roots := []string{lfRoot, crlfRoot}
+	lineEndings := []string{"\n", "\r\n"}
+	for index, root := range roots {
+		lineEnding := lineEndings[index]
+		writeTestFile(t, root, "promptsync.yaml", "version: 1\nsource: prompts/master.md\ntargets:\n  - path: CLAUDE.md\n    template: templates/claude.tmpl\n")
+		writeTestFile(t, root, "prompts/master.md", "# Shared rules"+lineEnding+"Second line"+lineEnding)
+		writeTestFile(t, root, "templates/claude.tmpl", "<!-- generated -->"+lineEnding+"{{ .Content }}")
+		if _, err := Sync(configs[index]); err != nil {
+			t.Fatalf("Sync() for %q inputs: %v", lineEnding, err)
+		}
+	}
+
+	lfOutput, err := os.ReadFile(filepath.Join(lfRoot, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read LF output: %v", err)
+	}
+	crlfOutput, err := os.ReadFile(filepath.Join(crlfRoot, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("read CRLF output: %v", err)
+	}
+	if string(lfOutput) != string(crlfOutput) {
+		t.Fatalf("outputs differ by input line endings: LF %q, CRLF %q", lfOutput, crlfOutput)
+	}
+	if strings.ContainsRune(string(crlfOutput), '\r') {
+		t.Fatalf("generated output contains carriage returns: %q", crlfOutput)
+	}
+}
+
 func TestInspectReportsMissingCurrentAndModifiedTargets(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "promptsync.yaml")
